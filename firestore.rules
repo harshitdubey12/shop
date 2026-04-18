@@ -1,0 +1,114 @@
+rules_version = '2';
+// Deploy: firebase deploy --only firestore:rules
+//
+// Super admin (Firestore writes from /super-admin):
+// Add every super admin email as a key in superAdminEmailMap() below. Keys must match
+// NEXT_PUBLIC_SUPER_ADMIN_EMAILS (same addresses, comma separated in env).
+// Keep the same list as lib/superAdminRulesMirror.ts (runtime checks log on mismatch).
+// Rules cannot read env at runtime; keep this map in sync when you add or change admins.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function ownsShop(shopId) {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/shops/$(shopId)).data.ownerId == request.auth.uid;
+    }
+
+    function superAdminEmailMap() {
+      // Add keys for each super admin email (same list as NEXT_PUBLIC_SUPER_ADMIN_EMAILS
+      // and lib/superAdminRulesMirror.ts). Example: "you@domain.com": true
+      return {};
+    }
+
+    function isListedSuperAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email != null &&
+        superAdminEmailMap()[request.auth.token.email] == true;
+    }
+
+    function bookingOwnerOrSuper(shopId) {
+      return isSignedIn() && (ownsShop(shopId) || isListedSuperAdmin());
+    }
+
+    /** Guest booking flow may bump totalBookings by exactly one (atomic increment). */
+    function shopTotalBookingsIncrementOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['totalBookings']) &&
+        request.resource.data.totalBookings is int &&
+        request.resource.data.totalBookings >= 1 &&
+        (
+          !resource.data.keys().hasAll(['totalBookings'])
+            ? request.resource.data.totalBookings == 1
+            : request.resource.data.totalBookings == resource.data.totalBookings + 1
+        );
+    }
+
+    /** Guest may set countedInShopTotal true once after shop total increment (batch with shop). */
+    function isCountedInShopTotalOnly(shopId) {
+      return resource != null &&
+        resource.data.shopId == shopId &&
+        request.resource.data.shopId == shopId &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['countedInShopTotal']) &&
+        request.resource.data.countedInShopTotal == true &&
+        (!resource.data.keys().hasAll(['countedInShopTotal']) || resource.data.countedInShopTotal != true);
+    }
+
+    function isNestedBookingPaymentOnly() {
+      return resource != null &&
+        request.resource.data.shopId == resource.data.shopId &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['paymentStatus', 'paymentProofUrl']);
+    }
+
+    function isLegacyBookingPaymentOnly() {
+      return resource != null &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['paymentStatus', 'paymentProofUrl']);
+    }
+
+    match /users/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /shops/{shopId} {
+      allow read: if true;
+      allow create: if isSignedIn() &&
+        request.resource.data.ownerId == request.auth.uid;
+      allow update: if ownsShop(shopId) || isListedSuperAdmin() ||
+        shopTotalBookingsIncrementOnly();
+      allow delete: if ownsShop(shopId);
+    }
+
+    match /shops/{shopId}/bookings/{bookingId} {
+      allow get: if true;
+      allow list: if true;
+      allow create: if request.resource.data.shopId == shopId;
+      allow update: if request.resource.data.shopId == shopId &&
+        (bookingOwnerOrSuper(shopId) || isNestedBookingPaymentOnly() ||
+          isCountedInShopTotalOnly(shopId));
+      allow delete: if bookingOwnerOrSuper(shopId);
+    }
+
+    // Per customer visit counter (normalized 12 digit phone id). Written atomically with new bookings.
+    match /shops/{shopId}/customerCounters/{phoneId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.keys().hasOnly(['lastVisitNumber']) &&
+        request.resource.data.lastVisitNumber is int &&
+        request.resource.data.lastVisitNumber >= 1 &&
+        request.resource.data.lastVisitNumber <= 10000000;
+      allow delete: if false;
+    }
+
+    match /bookings/{bookingId} {
+      allow create: if true;
+      allow get: if true;
+      allow list: if isSignedIn();
+      allow update: if isLegacyBookingPaymentOnly() || isSignedIn();
+      allow delete: if isSignedIn();
+    }
+  }
+}

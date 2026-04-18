@@ -1,0 +1,151 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0b0b0b;
+  --gold: #d4af37;
+  --gold-soft: #f3e2ad;
+  --gold-deep: #8a6d3b;
+  --text: #f8f8f8;
+  --muted: #a3a3a3;
+  --glass: rgba(255, 255, 255, 0.06);
+  --glass-border: rgba(212, 175, 55, 0.25);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-gold: var(--gold);
+  --color-gold-soft: var(--gold-soft);
+  --color-gold-deep: var(--gold-deep);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --font-sans: var(--font-dm);
+  --font-serif: var(--font-playfair);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-dm), system-ui, sans-serif;
+}
+
+::selection {
+  background: rgba(212, 175, 55, 0.35);
+  color: #0b0b0b;
+}
+
+.gold-gradient-text {
+  background: linear-gradient(180deg, #f3e2ad 0%, #d4af37 45%, #a67c00 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.glass-panel {
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.glow-gold {
+  box-shadow:
+    0 0 0 1px rgba(212, 175, 55, 0.35),
+    0 18px 50px rgba(0, 0, 0, 0.55),
+    0 0 40px rgba(212, 175, 55, 0.12);
+}
+
+.btn-ripple {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-ripple::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at var(--rx, 50%) var(--ry, 50%),
+    rgba(255, 255, 255, 0.35),
+    transparent 45%
+  );
+  opacity: 0;
+  transform: scale(0.2);
+  transition: opacity 0.5s ease, transform 0.6s ease;
+}
+
+.btn-ripple:active::after {
+  opacity: 0.35;
+  transform: scale(2.2);
+  transition: 0s;
+}
+
+.btn-ripple:active {
+  transform: scale(0.97);
+}
+
+.masonry {
+  column-count: 1;
+  column-gap: 1rem;
+}
+
+@media (min-width: 640px) {
+  .masonry {
+    column-count: 2;
+  }
+}
+
+@media (min-width: 1024px) {
+  .masonry {
+    column-count: 3;
+  }
+}
+
+.masonry-item {
+  break-inside: avoid;
+  margin-bottom: 1rem;
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.btn-primary {
+  transition: all 0.3s ease;
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+@media (hover: hover) {
+  .btn-primary:hover:not(:disabled) {
+    transform: scale(1.05);
+    box-shadow: 0 0 20px rgba(212, 175, 55, 0.5);
+  }
+
+  .btn-primary:hover:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+}
+
+.card-hover-depth {
+  transition:
+    transform 0.35s ease,
+    box-shadow 0.35s ease;
+}
+
+@media (hover: hover) {
+  .card-hover-depth:hover {
+    transform: translateY(-6px) scale(1.03);
+    box-shadow:
+      0 22px 50px rgba(0, 0, 0, 0.5),
+      0 0 42px rgba(212, 175, 55, 0.14);
+  }
+}

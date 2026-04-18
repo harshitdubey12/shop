@@ -1,0 +1,13 @@
+rules_version = '2';
+// SECURITY: Anyone may upload a payment proof image (guest checkout).
+// Only authenticated admin may read objects (admin dashboard previews).
+// Deploy with: firebase deploy --only storage
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /paymentProofs/{fileName} {
+      allow write: if request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+      allow read: if request.auth != null;
+    }
+  }
+}
