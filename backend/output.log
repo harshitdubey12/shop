@@ -1,0 +1,246 @@
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/sitecustomize.py:2: FutureWarning: In the future `np.object` will be defined as the corresponding NumPy scalar.
+  if not hasattr(np, 'object'):
+Celery not found, using dummy tasks for chaos testing
+============================= test session starts ==============================
+platform darwin -- Python 3.14.3, pytest-9.0.2, pluggy-1.6.0 -- /Library/Frameworks/Python.framework/Versions/3.14/bin/python3.14
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/harshitdubey/Desktop/barber/backend
+configfile: pyproject.toml
+plugins: anyio-4.12.1, cov-5.0.0, syrupy-5.1.0, flaky-3.8.1, timeout-2.4.0, hypothesis-6.151.9, asyncio-1.3.0, buildkite-test-collector-1.3.1, mock-3.14.0, xdist-3.6.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 7 items
+
+tests/test_chaos_framework.py::test_scenario_1_api_success_db_failure FAILED
+tests/test_chaos_framework.py::test_scenario_2_double_execution_storm FAILED
+tests/test_chaos_framework.py::test_scenario_3_webhook_delay PASSED
+tests/test_chaos_framework.py::test_scenario_4_redis_restart PASSED
+tests/test_chaos_framework.py::test_scenario_5_repair_loop_stress !!! FINANCIAL ALERT [repair_circuit_breaker] !!!: {'booking_id': 'sc5', 'attempts': 3}
+FAILED
+tests/test_chaos_framework.py::test_scenario_6_partial_failure_chain FAILED
+tests/test_chaos_framework.py::test_scenario_7_load_and_chaos PASSEDbuildkite-test-collector - WARNING - No BUILDKITE_ANALYTICS_TOKEN environment variable present
+
+
+=================================== FAILURES ===================================
+____________________ test_scenario_1_api_success_db_failure ____________________
+
+db = <sqlalchemy.orm.session.Session object at 0x106e34980>
+settings = Settings(razorpay_key_id='test', razorpay_key_secret='test', razorpay_route_enabled=True, platform_commission_paise=50...refund_threshold_per_hour=10, anomaly_failed_transfer_threshold_per_hour=5, anomaly_cancellation_threshold_per_hour=20)
+
+    @pytest.mark.asyncio
+    async def test_scenario_1_api_success_db_failure(db, settings):
+        """Scenario 1: API success + DB failure."""
+        b = setup_booking(db, id="sc1")
+        framework_metrics["scenarios_run"] += 1
+    
+        failure_injection.set_chaos("db_fail_after_write", True)
+        framework_metrics["failures_injected"] += 1
+    
+        with patch("app.services.razorpay_service.capture_then_route_transfers") as mock_tr, \
+             patch("app.services.razorpay_service.fetch_payment") as mock_fetch_pay:
+    
+            mock_tr.return_value = (None, {"items": [{"id": "trf_1"}]})
+            mock_fetch_pay.return_value = {"status": "captured", "amount": 10500}
+    
+            try:
+                await payment_service.finalize_route_split_for_booking(db, settings, "sc1", "pay_sc1")
+            except failure_injection.ChaosError:
+                db.rollback()
+    
+        failure_injection.reset_chaos()
+    
+        # Repair
+        with patch("app.services.razorpay_service.fetch_payment") as m_pay, \
+             patch("app.services.razorpay_service.fetch_payment_transfers") as m_tr, \
+             patch("app.services.razorpay_service.fetch_payment_refunds") as m_ref:
+            m_pay.return_value = {"status": "captured", "amount": 10500}
+            m_tr.return_value = {"items": [{"id": "trf_1", "amount": 10500}]}
+            m_ref.return_value = {"items": []}
+    
+            res = await payment_service.repair_booking_integrity(db, settings, "sc1", dry_run=False)
+            assert res["ok"] is True
+            framework_metrics["recoveries_successful"] += 1
+    
+        b = await wait_for_convergence(db, "sc1")
+        assert b.status in ["TRANSFER_COMPLETED", "FINALIZED"]
+        assert_financial_invariants(db, "Scenario 1")
+>       validate_log_traces(db, "sc1")
+
+tests/test_chaos_framework.py:153: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+db = <sqlalchemy.orm.session.Session object at 0x106e34980>, booking_id = 'sc1'
+
+    def validate_log_traces(db, booking_id):
+        """Phase 6: Log Trace Validation"""
+        logs = db.scalars(select(FinancialActionLog).where(FinancialActionLog.booking_id == booking_id)).all()
+>       assert len(logs) > 0, f"No financial action logs for {booking_id}"
+E       AssertionError: No financial action logs for sc1
+E       assert 0 > 0
+E        +  where 0 = len([])
+
+tests/test_chaos_framework.py:103: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  app.failure_injection:failure_injection.py:77 Chaos: Simulating failure after successful write but before commit completion
+____________________ test_scenario_2_double_execution_storm ____________________
+
+db = <sqlalchemy.orm.session.Session object at 0x106e34d70>
+settings = Settings(razorpay_key_id='test', razorpay_key_secret='test', razorpay_route_enabled=True, platform_commission_paise=50...refund_threshold_per_hour=10, anomaly_failed_transfer_threshold_per_hour=5, anomaly_cancellation_threshold_per_hour=20)
+
+    @pytest.mark.asyncio
+    async def test_scenario_2_double_execution_storm(db, settings):
+        """Scenario 2: Double execution storm."""
+        b = setup_booking(db, id="sc2")
+        framework_metrics["scenarios_run"] += 1
+    
+        failure_injection.set_chaos("celery_retry_storm", True)
+        framework_metrics["failures_injected"] += 1
+    
+        idem = "sc2_refund_idem"
+        with patch("app.services.razorpay_service.refund_payment") as mock_ref:
+            mock_ref.return_value = {"id": "ref_sc2"}
+    
+            # Simulate storm: running multiple initiates simultaneously
+            tasks = [
+                payment_service.initiate_refund(db, settings, "sc2", 500, "reason", idempotency_key=idem)
+                for _ in range(5)
+            ]
+    
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+            # Only one should succeed or return existing, others might hit lock exceptions or return the same
+            successes = [r for r in results if isinstance(r, RefundLog)]
+            assert len(successes) > 0
+    
+        failure_injection.reset_chaos()
+    
+        # Clean up state to converge
+        db.refresh(b)
+        b.financial_operation_lock = False
+        db.commit()
+    
+>       assert_financial_invariants(db, "Scenario 2")
+
+tests/test_chaos_framework.py:189: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+db = <sqlalchemy.orm.session.Session object at 0x106e34d70>
+scenario_name = 'Scenario 2'
+
+    def assert_financial_invariants(db, scenario_name=""):
+        """Phase 3: Invariant Monitor"""
+        framework_metrics["invariants_checked"] += 1
+        total_payments = db.scalar(select(func.sum(Booking.payment_amount_paise))) or 0
+        total_transferred = db.scalar(select(func.sum(Booking.total_transferred_amount_paise))) or 0
+        total_refunded = db.scalar(select(func.sum(Booking.total_refunded_amount_paise))) or 0
+    
+        if total_payments != (total_transferred + total_refunded):
+            framework_metrics["invariants_violated"] += 1
+>           pytest.fail(f"[{scenario_name}] INVARIANT VIOLATION: Payments ({total_payments}) != Transferred ({total_transferred}) + Refunded ({total_refunded})")
+E           Failed: [Scenario 2] INVARIANT VIOLATION: Payments (10500) != Transferred (0) + Refunded (500)
+
+tests/test_chaos_framework.py:88: Failed
+______________________ test_scenario_5_repair_loop_stress ______________________
+
+db = <sqlalchemy.orm.session.Session object at 0x107515550>
+settings = Settings(razorpay_key_id='test', razorpay_key_secret='test', razorpay_route_enabled=True, platform_commission_paise=50...refund_threshold_per_hour=10, anomaly_failed_transfer_threshold_per_hour=5, anomaly_cancellation_threshold_per_hour=20)
+
+    @pytest.mark.asyncio
+    async def test_scenario_5_repair_loop_stress(db, settings):
+        """Scenario 5: Repair Loop Stress."""
+        b = setup_booking(db, id="sc5")
+        framework_metrics["scenarios_run"] += 1
+    
+        b.repair_attempt_count = 3
+        db.commit()
+    
+        res = await payment_service.repair_booking_integrity(db, settings, "sc5", dry_run=False)
+    
+        assert res["ok"] is False
+        assert "FINANCIAL_LOCKED" in res["reason"]
+        db.refresh(b)
+        assert b.status == "FINANCIAL_LOCKED"
+>       assert_financial_invariants(db, "Scenario 5")
+
+tests/test_chaos_framework.py:274: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+db = <sqlalchemy.orm.session.Session object at 0x107515550>
+scenario_name = 'Scenario 5'
+
+    def assert_financial_invariants(db, scenario_name=""):
+        """Phase 3: Invariant Monitor"""
+        framework_metrics["invariants_checked"] += 1
+        total_payments = db.scalar(select(func.sum(Booking.payment_amount_paise))) or 0
+        total_transferred = db.scalar(select(func.sum(Booking.total_transferred_amount_paise))) or 0
+        total_refunded = db.scalar(select(func.sum(Booking.total_refunded_amount_paise))) or 0
+    
+        if total_payments != (total_transferred + total_refunded):
+            framework_metrics["invariants_violated"] += 1
+>           pytest.fail(f"[{scenario_name}] INVARIANT VIOLATION: Payments ({total_payments}) != Transferred ({total_transferred}) + Refunded ({total_refunded})")
+E           Failed: [Scenario 5] INVARIANT VIOLATION: Payments (10500) != Transferred (0) + Refunded (0)
+
+tests/test_chaos_framework.py:88: Failed
+------------------------------ Captured log call -------------------------------
+CRITICAL app.services.metrics_service:metrics_service.py:180 FINANCIAL_ALERT: repair_circuit_breaker payload={'booking_id': 'sc5', 'attempts': 3}
+____________________ test_scenario_6_partial_failure_chain _____________________
+
+db = <sqlalchemy.orm.session.Session object at 0x1075157f0>
+settings = Settings(razorpay_key_id='test', razorpay_key_secret='test', razorpay_route_enabled=True, platform_commission_paise=50...refund_threshold_per_hour=10, anomaly_failed_transfer_threshold_per_hour=5, anomaly_cancellation_threshold_per_hour=20)
+
+    @pytest.mark.asyncio
+    async def test_scenario_6_partial_failure_chain(db, settings):
+        """Scenario 6: Partial Failure Chain."""
+        b = setup_booking(db, id="sc6")
+        framework_metrics["scenarios_run"] += 1
+    
+        failure_injection.set_chaos("db_fail_before_commit", True)
+        framework_metrics["failures_injected"] += 1
+    
+        with patch("app.services.razorpay_service.capture_then_route_transfers") as mock_tr, \
+             patch("app.services.razorpay_service.fetch_payment") as mock_fetch:
+            mock_tr.return_value = (None, {"items": [{"id": "trf_sc6"}]})
+            mock_fetch.return_value = {"status": "captured", "amount": 10500}
+            try:
+                await payment_service.finalize_route_split_for_booking(db, settings, "sc6", "pay_sc6")
+            except failure_injection.ChaosError:
+                db.rollback()
+    
+        failure_injection.reset_chaos()
+    
+        with patch("app.services.razorpay_service.fetch_payment") as m_pay, \
+             patch("app.services.razorpay_service.fetch_payment_transfers") as m_tr, \
+             patch("app.services.razorpay_service.fetch_payment_refunds") as m_ref:
+            m_pay.return_value = {"status": "captured", "amount": 10500}
+            m_tr.return_value = {"items": [{"id": "trf_sc6", "amount": 10500}]}
+            m_ref.return_value = {"items": []}
+    
+            await payment_service.repair_booking_integrity(db, settings, "sc6", dry_run=False)
+            framework_metrics["recoveries_successful"] += 1
+    
+        await wait_for_convergence(db, "sc6")
+        assert_financial_invariants(db, "Scenario 6")
+>       validate_log_traces(db, "sc6")
+
+tests/test_chaos_framework.py:309: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+db = <sqlalchemy.orm.session.Session object at 0x1075157f0>, booking_id = 'sc6'
+
+    def validate_log_traces(db, booking_id):
+        """Phase 6: Log Trace Validation"""
+        logs = db.scalars(select(FinancialActionLog).where(FinancialActionLog.booking_id == booking_id)).all()
+>       assert len(logs) > 0, f"No financial action logs for {booking_id}"
+E       AssertionError: No financial action logs for sc6
+E       assert 0 > 0
+E        +  where 0 = len([])
+
+tests/test_chaos_framework.py:103: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  app.failure_injection:failure_injection.py:73 Chaos: Simulating DB failure before commit
+=========================== short test summary info ============================
+FAILED tests/test_chaos_framework.py::test_scenario_1_api_success_db_failure
+FAILED tests/test_chaos_framework.py::test_scenario_2_double_execution_storm
+FAILED tests/test_chaos_framework.py::test_scenario_5_repair_loop_stress - Fa...
+FAILED tests/test_chaos_framework.py::test_scenario_6_partial_failure_chain
+========================= 4 failed, 3 passed in 0.30s ==========================

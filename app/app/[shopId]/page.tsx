@@ -10,6 +10,8 @@ import { getClientFirestore, isFirebaseConfigured } from "@/lib/firebase";
 import { getShop } from "@/lib/shops";
 import type { Shop } from "@/lib/types";
 
+import { ShopTrustBlock } from "@/components/shop/ShopTrustBlock";
+
 export default function TenantHomePage() {
   const params = useParams();
   const shopId = typeof params?.shopId === "string" ? params.shopId : "";
@@ -56,6 +58,7 @@ export default function TenantHomePage() {
         <ShopTenantHeroBar shop={shop} />
         <ShopLocationTrustStrip shop={shop} />
       </div>
+      <ShopTrustBlock shopId={shop.id} />
       <HomePageSections tenantShopId={shop.id} />
     </>
   );

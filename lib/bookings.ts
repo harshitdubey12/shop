@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import {
   addDoc,
   collection,
@@ -330,43 +331,14 @@ function bumpShopTotalBookingsAfterCreate(
 }
 
 export async function createBooking(
-  db: Firestore,
-  shopId: string,
-  payload: Omit<
+  _db: Firestore,
+  _shopId: string,
+  _payload: Omit<
     Booking,
     "id" | "createdAt" | "shopId" | "customerVisitNumber"
   >
 ): Promise<string> {
-  return runFirestoreQuery(async () => {
-    const status = sanitizeBookingStatus(payload.status);
-    const customerPhone = normalizePhone(payload.customerPhone);
-    const amount = safeBookingAmount(payload.amount);
-    const base: Record<string, unknown> = {
-      ...payload,
-      status,
-      customerPhone,
-      amount,
-      shopId,
-      paymentProofUrl: payload.paymentProofUrl ?? null,
-    };
-    if (customerPhone.length !== 12) {
-      const ref = await addDoc(bookingsCollectionRef(db, shopId), {
-        ...base,
-        createdAt: serverTimestamp(),
-      });
-      bumpShopTotalBookingsAfterCreate(db, shopId, ref.id, {
-        skipReadPrecheck: true,
-      });
-      return ref.id;
-    }
-    const id = await runVisitAllocationSerialized(shopId, customerPhone, () =>
-      createBookingWithVisitCounter(db, shopId, base, customerPhone)
-    );
-    bumpShopTotalBookingsAfterCreate(db, shopId, id, {
-      skipReadPrecheck: true,
-    });
-    return id;
-  });
+  throw new Error("Firestore writes are deprecated. Use FastAPI backend POST /bookings/create.");
 }
 
 /** Load booking: nested path when shopId is known; otherwise legacy top level document. */
@@ -537,72 +509,28 @@ export async function countBookingsForCustomerPhone(
 }
 
 export async function updateBookingStatus(
-  db: Firestore,
-  shopId: string | null,
-  id: string,
-  status: BookingStatus
+  _db: Firestore,
+  _shopId: string | null,
+  _id: string,
+  _status: BookingStatus
 ) {
-  return runFirestoreQuery(async () => {
-    const next = sanitizeBookingStatus(status);
-    if (shopId) {
-      await updateDoc(doc(db, "shops", shopId, "bookings", id), {
-        status: next,
-      });
-    } else {
-      await updateDoc(doc(db, LEGACY_COL, id), { status: next });
-    }
-  });
+  throw new Error("Firestore writes are deprecated. Use FastAPI backend POST /bookings/{id}/status.");
 }
 
 export async function updatePaymentStatus(
-  db: Firestore,
-  shopId: string | null,
-  id: string,
-  paymentStatus: PaymentStatus,
-  paymentProofUrl?: string | null
+  _db: Firestore,
+  _shopId: string | null,
+  _id: string,
+  _paymentStatus: PaymentStatus,
+  _paymentProofUrl?: string | null
 ) {
-  return runFirestoreQuery(async () => {
-    const patch: Record<string, unknown> = { paymentStatus };
-    if (paymentProofUrl !== undefined) {
-      patch.paymentProofUrl = paymentProofUrl;
-    }
-    if (shopId) {
-      await updateDoc(doc(db, "shops", shopId, "bookings", id), patch);
-    } else {
-      await updateDoc(doc(db, LEGACY_COL, id), patch);
-    }
-  });
+  throw new Error("Firestore writes are deprecated. Use FastAPI backend for payment updates.");
 }
 
 export async function deleteBooking(
-  db: Firestore,
-  shopId: string | null,
-  id: string
+  _db: Firestore,
+  _shopId: string | null,
+  _id: string
 ) {
-  return runFirestoreQuery(async () => {
-    if (shopId) {
-      const bookingRef = doc(db, "shops", shopId, "bookings", id);
-      const shopRef = doc(db, "shops", shopId);
-      await runTransaction(db, async (transaction) => {
-        const bSnap = await transaction.get(bookingRef);
-        if (!bSnap.exists()) {
-          return;
-        }
-        const counted = bSnap.data()?.countedInShopTotal === true;
-        if (counted) {
-          const sSnap = await transaction.get(shopRef);
-          const t = sSnap.data()?.totalBookings;
-          const cur =
-            typeof t === "number" && Number.isFinite(t) ? Math.floor(t) : 0;
-          if (cur > 0) {
-            transaction.update(shopRef, { totalBookings: increment(-1) });
-          }
-        }
-        transaction.delete(bookingRef);
-      });
-      clearShopBookingStatsCache(shopId);
-    } else {
-      await deleteDoc(doc(db, LEGACY_COL, id));
-    }
-  });
+  throw new Error("Firestore writes are deprecated. Use FastAPI backend to cancel bookings.");
 }

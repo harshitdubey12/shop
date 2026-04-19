@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -67,6 +68,9 @@ import { formatLastVisitRelative } from "@/lib/dateLocal";
 import { ShopTenantHeroBar } from "@/components/shop/ShopTenantHeroBar";
 import { getBrand } from "@/config/brand";
 import { BOOKING_DATA_MISMATCH_MESSAGE } from "@/lib/configMessages";
+import { useRouter } from "next/navigation";
+import { createSlotHold } from "@/lib/api";
+import { useBookingStore } from "@/lib/store";
 
 const steps = [
   "Service",
@@ -141,6 +145,9 @@ export function BookingWizard({
   const [nearbyBlockedReason, setNearbyBlockedReason] = useState<
     null | "location" | "failed"
   >(null);
+
+  const router = useRouter();
+  const setSlotHold = useBookingStore(s => s.setSlotHold);
 
   useEffect(() => {
     if (shopProp !== undefined) setShop(shopProp);
@@ -423,194 +430,40 @@ export function BookingWizard({
       toast.error(v.message);
       return;
     }
-    const db = getClientFirestore();
-    if (db && isFirebaseConfigured() && shop && !isShopSubscriptionValid(shop)) {
-      toast.error(SUBSCRIPTION_BLOCK_MESSAGE);
-      return;
-    }
+    
     setBusy(true);
-    const preferredStaff =
-      barberId === AUTO_BARBER_ID ? null : barberId;
-    const displayBarberName =
-      barberId === AUTO_BARBER_ID ? "Any available" : barber.name;
-
     try {
-      let latest: Booking[] = [];
-      if (db && isFirebaseConfigured()) {
-        latest = await listBookingsForShopDate(db, shopId, isoDate);
-      } else {
-        latest = demoListBookings(shopId).filter((b) => b.date === isoDate);
-      }
-
-      const atTime = latest.filter(
-        (b) => b.time === time && b.status !== "cancelled"
-      ).length;
-      if (atTime >= slotCapacity) {
-        toast.error("This slot is no longer available.");
-        const nextT = firstNextAvailableAfter(slots, time);
-        setSameShopNext(nextT);
-        setNearby([]);
-        setNearbyBlockedReason(null);
-        if (
-          shop &&
-          !shop.locationIncomplete &&
-          db &&
-          isFirebaseConfigured()
-        ) {
-          setNearbyBusy(true);
-          try {
-            const { suggestions, failed } = await getNearbyBookingSuggestions(
-              db,
-              shop,
-              isoDate
-            );
-            setNearby(suggestions);
-            if (failed) {
-              setNearbyBlockedReason("failed");
-            }
-          } finally {
-            setNearbyBusy(false);
-          }
-        } else if (shop?.locationIncomplete) {
-          setNearbyBlockedReason("location");
-        }
-        setBusy(false);
-        return;
-      }
-
-      const pick = assignStaffForSlot(
-        shop,
-        isoDate,
-        time,
-        latest,
-        preferredStaff
-      );
-      if (!pick.ok) {
-        toast.error("No stylist is available for this slot.");
-        setBusy(false);
-        return;
-      }
-
-      let payload: Omit<Booking, "id" | "createdAt" | "shopId">;
-      if (preferredStaff == null) {
-        payload = {
-          serviceId: service.id,
-          serviceName: service.name,
-          barberId: null,
-          barberName: "Any available",
-          assignedBarberId: null,
-          assignedBarberName: null,
-          date: isoDate,
-          time,
-          customerName: name.trim(),
-          customerPhone: normalizePhone(phone),
-          status: "confirmed",
-          paymentStatus: "pending_payment",
-          paymentProofUrl: null,
-          amount: safeBookingAmount(service.price),
-        };
-      } else {
-        payload = {
-          serviceId: service.id,
-          serviceName: service.name,
-          barberId: preferredStaff,
-          barberName: displayBarberName,
-          assignedBarberId: pick.id,
-          assignedBarberName: pick.name,
-          date: isoDate,
-          time,
-          customerName: name.trim(),
-          customerPhone: normalizePhone(phone),
-          status: "confirmed",
-          paymentStatus: "pending_payment",
-          paymentProofUrl: null,
-          amount: safeBookingAmount(service.price),
-        };
-      }
-
-      let id: string;
-      if (db && isFirebaseConfigured()) {
-        id = await createBooking(db, shopId, payload);
-        const written = await getBooking(db, id, shopId);
-        if (!written) {
-          toast.error(BOOKING_DATA_MISMATCH_MESSAGE, {
-            action: {
-              label: "Retry",
-              onClick: () => void submit(),
-            },
-          });
-          setBusy(false);
-          return;
-        }
-      } else {
-        id =
-          typeof crypto !== "undefined" && crypto.randomUUID
-            ? crypto.randomUUID()
-            : `bk_${Date.now()}`;
-        const np = normalizePhone(phone);
-        const booking: Booking = {
-          ...payload,
-          shopId,
-          id,
-          createdAt: Date.now(),
-          ...(np.length === 12
-            ? {
-                customerVisitNumber:
-                  effectiveVisitCount(
-                    demoListBookings(shopId).filter(
-                      (b) => normalizePhone(b.customerPhone) === np
-                    )
-                  ) + 1,
-              }
-            : {}),
-        };
-        demoSaveBooking(shopId, booking);
-        toast.message("Demo mode", {
-          description: "Firebase env not set. Saving locally on this device.",
-        });
-      }
-      const bookedPhone = normalizePhone(phone);
-      if (bookedPhone.length === 12) {
-        await recordCustomerVisit(
-          db && isFirebaseConfigured() ? db : null,
-          shopId,
-          {
-            customerName: name.trim(),
-            phone,
-            serviceId: service.id,
-            serviceName: service.name,
-            visitDateIso: isoDate,
-            preferredTime: time,
-          }
-        );
-        saveRebookPayload(shopId, {
-          serviceId: service.id,
-          time,
-          customerName: name.trim(),
-          customerPhone: bookedPhone,
-          lastVisitDate: isoDate,
-        });
-        rememberLastBookingPhoneForRebook(shopId, phone);
-      }
-      setSavedBookingId(id);
-      toast.success("Booking saved", {
-        description:
-          "Please arrive 5 minutes before your scheduled time. Complete payment to secure your chair.",
+      // 1. Create slot hold via FastAPI
+      const preferredStaff = barberId === AUTO_BARBER_ID || barberId === null ? undefined : barberId;
+      const slotStartUnix = Math.floor(new Date(`${isoDate}T${time}:00`).getTime() / 1000);
+      
+      const res = await createSlotHold({
+        vendor_id: shopId,
+        barber_id: preferredStaff,
+        slot_start_unix: slotStartUnix
       });
-      if (bookedPhone.length !== 12) {
-        toast.message(
-          "Add a valid phone number to enable rebooking and customer history"
-        );
-      }
-    } catch (e) {
-      const isFs =
-        e instanceof Error && e.name === "FirestoreQueryError";
-      toast.error(isFs ? e.message : DATA_LOAD_TOAST, {
-        action: {
-          label: "Retry",
-          onClick: () => void submit(),
-        },
+
+      // 2. Save hold state to Zustand
+      setSlotHold(res.hold_id, res.expires_at_unix, {
+        vendor_id: shopId,
+        barber_id: preferredStaff || null,
+        service_id: service.id,
+        slot_start_unix: slotStartUnix
       });
+
+      // 3. Save customer form details temporarily (so checkout page can use them)
+      sessionStorage.setItem("checkout_customer_name", name.trim());
+      sessionStorage.setItem("checkout_customer_phone", normalizePhone(phone));
+
+      // 4. Navigate to checkout
+      router.push("/checkout");
+      
+    } catch (e: any) {
+      if (e.response?.status === 409) {
+        toast.error("This slot was just booked by someone else.");
+      } else {
+        toast.error("Failed to hold slot. Please try again.");
+      }
     } finally {
       setBusy(false);
     }

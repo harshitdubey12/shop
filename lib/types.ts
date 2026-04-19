@@ -58,6 +58,11 @@ export interface Shop {
   staff?: ShopStaffMember[];
   /** Denormalized count of nested bookings; incremented on each create. Legacy shops may omit until backfill. */
   totalBookings?: number;
+  /**
+   * Razorpay Route linked account id (acc_...) for instant split payouts.
+   * Required before server creates Route orders for this shop.
+   */
+  razorpayAccountId?: string;
 }
 
 export interface Booking {

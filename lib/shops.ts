@@ -84,6 +84,12 @@ export function mapShop(id: string, data: Record<string, unknown>): Shop {
         ? Math.floor(data.totalBookings)
         : undefined,
     staff,
+    razorpayAccountId: (() => {
+      const v = data.razorpayAccountId ?? data.razorpay_account_id;
+      if (v == null || String(v).trim() === "") return undefined;
+      const s = String(v).trim();
+      return s.length > 0 ? s : undefined;
+    })(),
   };
 }
 
